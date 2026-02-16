@@ -1,7 +1,9 @@
 import "dotenv/config";
 import crypto from "node:crypto";
+import http from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import * as z from "zod/v4";
 import { base64DecodeToBuffer } from "./lib/base64.js";
 import { loadPolicyConfig } from "./lib/config.js";
@@ -716,17 +718,128 @@ async function main() {
     scope: policy.auth.scope,
   });
 
-  const server = new McpServer({
-    name: "docsmith-connect-m365",
-    version: "1.2.0",
+  const transportMode = (process.env.MCP_TRANSPORT || "stdio").trim().toLowerCase();
+  if (!["stdio", "http"].includes(transportMode)) {
+    throw new Error("MCP_TRANSPORT must be 'stdio' or 'http'.");
+  }
+
+  if (transportMode === "stdio") {
+    const server = new McpServer({
+      name: "docsmith-connect-m365",
+      version: "1.3.0",
+    });
+
+    registerTools({ server, graph, policy });
+
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error(
+      `docsmith-connect-m365 running on stdio (phase=${policy.phaseMode}, writes=${policy.writesEnabled ? "on" : "off"}, audit_mode=${policy.auditMode})`
+    );
+    return;
+  }
+
+  const httpHost = process.env.MCP_HTTP_HOST || "127.0.0.1";
+  const httpPort = Number(process.env.MCP_HTTP_PORT || process.env.PORT || "3000");
+  if (!Number.isFinite(httpPort) || httpPort <= 0) {
+    throw new Error("MCP_HTTP_PORT must be a positive number.");
+  }
+  const rawHttpPath = process.env.MCP_HTTP_PATH || "/mcp";
+  const httpPath = rawHttpPath.startsWith("/") ? rawHttpPath : `/${rawHttpPath}`;
+
+  function isJsonContentType(contentTypeHeader) {
+    if (!contentTypeHeader) return false;
+    return contentTypeHeader.toLowerCase().includes("application/json");
+  }
+
+  async function parseJsonBody(req) {
+    const chunks = [];
+    for await (const chunk of req) {
+      chunks.push(chunk);
+    }
+    if (!chunks.length) return undefined;
+    const bodyText = Buffer.concat(chunks).toString("utf8").trim();
+    if (!bodyText) return undefined;
+    try {
+      return JSON.parse(bodyText);
+    } catch (error) {
+      throw new HttpError("Invalid JSON body", {
+        status: 400,
+        url: req.url,
+        body: { message: error.message },
+      });
+    }
+  }
+
+  const httpServer = http.createServer(async (req, res) => {
+    if (!req.url) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "BadRequest", message: "Missing request URL." }));
+      return;
+    }
+
+    const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    if (requestUrl.pathname !== httpPath) {
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "NotFound", message: "Unknown route." }));
+      return;
+    }
+
+    let parsedBody;
+    try {
+      if (req.method === "POST") {
+        if (!isJsonContentType(req.headers["content-type"])) {
+          res.writeHead(415, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              error: "UnsupportedMediaType",
+              message: "Content-Type must be application/json for POST requests.",
+            })
+          );
+          return;
+        }
+        parsedBody = await parseJsonBody(req);
+      }
+
+      const server = new McpServer({
+        name: "docsmith-connect-m365",
+        version: "1.3.0",
+      });
+      registerTools({ server, graph, policy });
+
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+      });
+      await server.connect(transport);
+      await transport.handleRequest(req, res, parsedBody);
+
+      res.on("close", () => {
+        transport.close().catch(() => {});
+        server.close().catch(() => {});
+      });
+    } catch (error) {
+      const status = error instanceof HttpError && error.status ? error.status : 500;
+      const payload =
+        error instanceof HttpError
+          ? { error: error.name, message: error.message, details: error.body ?? null }
+          : { error: "InternalError", message: error?.message || String(error) };
+      if (!res.headersSent) {
+        res.writeHead(status, { "content-type": "application/json" });
+        res.end(JSON.stringify(payload));
+      }
+    }
   });
 
-  registerTools({ server, graph, policy });
+  await new Promise((resolve, reject) => {
+    httpServer.once("error", reject);
+    httpServer.listen(httpPort, httpHost, () => {
+      httpServer.off("error", reject);
+      resolve();
+    });
+  });
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
   console.error(
-    `docsmith-connect-m365 running on stdio (phase=${policy.phaseMode}, writes=${policy.writesEnabled ? "on" : "off"}, audit_mode=${policy.auditMode})`
+    `docsmith-connect-m365 running on http://${httpHost}:${httpPort}${httpPath} (phase=${policy.phaseMode}, writes=${policy.writesEnabled ? "on" : "off"}, audit_mode=${policy.auditMode})`
   );
 }
 

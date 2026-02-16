@@ -73,8 +73,21 @@ Set `config/allowlist.json` values:
 ## Run locally
 
 ```bash
+# stdio transport (default)
 npm start
+
+# streamable HTTP transport for connector deployments
+MCP_TRANSPORT=http MCP_HTTP_HOST=127.0.0.1 MCP_HTTP_PORT=3000 MCP_HTTP_PATH=/mcp npm start
 ```
+
+### Transport modes
+
+- `MCP_TRANSPORT=stdio` (default): local MCP client process bridge
+- `MCP_TRANSPORT=http`: streamable HTTP endpoint for connector deployment
+- `MCP_HTTP_HOST`: host bind for HTTP mode (default `127.0.0.1`)
+- `MCP_HTTP_PORT`: port for HTTP mode (default `3000`)
+- `MCP_HTTP_PATH`: route path for HTTP mode (default `/mcp`)
+
 
 ## Container packaging
 
@@ -125,3 +138,4 @@ docker save docsmith-connect-m365:latest | sha256sum
 - Production boundary: `docs/03-Architecture/DocSmith-Connect-M365-Production-Boundary.md`
 - Changelog: `CHANGELOG.md`
 - Security policy: `SECURITY.md`
+- Prototype execution plan: `docs/03-Architecture/Prototype-Implementation-Plan.md`
