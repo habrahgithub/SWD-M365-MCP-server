@@ -2,6 +2,13 @@
 
 All notable changes to `DocSmith Connect for Microsoft 365` are documented in this file.
 
+## 1.3.1-internal-beta.1 - 2026-02-12
+
+- Added dual transport runtime mode via `MCP_TRANSPORT`:
+  - `stdio` (default)
+  - streamable HTTP endpoint mode (`MCP_TRANSPORT=http`) configurable with `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, and `MCP_HTTP_PATH`.
+- Added a phased implementation runbook for delivering and operating a working MCP server connector prototype.
+
 ## 1.3.0-internal-beta.1 - 2026-02-09
 
 - Internal beta baseline release (tag `v1.0.0-internal-beta.1`) that codifies the hardened V1 policy surface for the `docsmith-connect-m365` bridge.
